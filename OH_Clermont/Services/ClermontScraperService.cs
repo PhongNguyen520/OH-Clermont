@@ -347,13 +347,30 @@ public class ClermontScraperService
             // Ignore if structure changes
         }
 
-        // Reference: first Instrument # link in Marginal References (loadDoc)
+        // Reference: full row per Marginal Reference (Doc# + Type + Book/Page + Date), multiple rows joined by "; "
         try
         {
-            var referenceLink = docInfoFrame.Locator("xpath=//a[contains(@onclick,'loadDoc')][1]");
-            if (await referenceLink.CountAsync() > 0)
+            var referenceLinks = docInfoFrame.Locator("xpath=//a[contains(@onclick,\"loadDoc('\")]");
+            var refCount = await referenceLinks.CountAsync();
+            if (refCount > 0)
             {
-                record.Reference = (await referenceLink.First.InnerTextAsync()).Trim();
+                var rowLines = new List<string>();
+                for (var r = 0; r < refCount; r++)
+                {
+                    var link = referenceLinks.Nth(r);
+                    var row = link.Locator("xpath=ancestor::tr[1]");
+                    var cells = row.Locator("td");
+                    var cellCount = await cells.CountAsync();
+                    if (cellCount == 0) continue;
+                    var cellTexts = await cells.AllInnerTextsAsync();
+                    var line = string.Join("\t",
+                        cellTexts
+                            .Select(t => (t ?? string.Empty).Replace("\u00A0", " ").Trim())
+                            .Where(t => !string.IsNullOrWhiteSpace(t)));
+                    if (!string.IsNullOrWhiteSpace(line))
+                        rowLines.Add(line);
+                }
+                record.Reference = string.Join("; ", rowLines);
             }
         }
         catch
