@@ -57,6 +57,9 @@ public class ClermontRecord
     [Name("Long Description")]
     public string LongDescription { get; set; } = string.Empty;
 
+    [Name("Images")]
+    public string Images { get; set; } = string.Empty;
+
     /// <summary>
     /// CsvHelper configuration: '|' delimiter and always quote values.
     /// </summary>

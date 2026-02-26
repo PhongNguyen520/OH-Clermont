@@ -569,6 +569,8 @@ public class ClermontScraperService
     /// </summary>
     static async Task ProcessImagesForCurrentRecordAsync(IPage page, ClermontRecord record, DateTime searchDate, int recordIndex)
     {
+        var imageLinks = new List<string>();
+
         // Find the docImgViewFrame iframe (image viewer) directly from the frame tree
         var docImgFrame = page.Frames.FirstOrDefault(f =>
             string.Equals(f.Name, "docImgViewFrame", StringComparison.OrdinalIgnoreCase) ||
@@ -699,6 +701,7 @@ public class ClermontScraperService
                     var key = $"Images/{dateForFilename}/{baseName}/{fileName}";
 
                     await ApifyHelper.SaveImageAsync(key, tiffBytes);
+                    imageLinks.Add(ApifyHelper.GetRecordUrl(key));
                     Console.WriteLine($"[Images] Saved {key}");
                     // Release large buffers and hint GC to avoid OOM across many image pages
                     tiffBytes = null;
@@ -735,6 +738,8 @@ public class ClermontScraperService
                 }
             }
         }
+
+        record.Images = string.Join("\n", imageLinks);
     }
 
     /// <summary>

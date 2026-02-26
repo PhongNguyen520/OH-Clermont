@@ -263,19 +263,29 @@ public static class ApifyHelper
         await File.WriteAllBytesAsync(fullPath, imageBytes, ct);
     }
 
-    /// <summary>Get the URL or path for a key-value store record.</summary>
+    /// <summary>Get the URL (on Apify) or full local file path (when running locally) for a key-value store record.</summary>
     public static string GetRecordUrl(string key)
     {
-        var sanitized = SanitizeKeyForApify(key);
         var storeId = Environment.GetEnvironmentVariable("APIFY_DEFAULT_KEY_VALUE_STORE_ID")
             ?? Environment.GetEnvironmentVariable("ACTOR_DEFAULT_KEY_VALUE_STORE_ID");
         if (!string.IsNullOrEmpty(storeId))
         {
+            var sanitized = SanitizeKeyForApify(key);
             var apiBase = Environment.GetEnvironmentVariable("APIFY_API_PUBLIC_BASE_URL") ?? "https://api.apify.com";
             return $"{apiBase.TrimEnd('/')}/v2/key-value-stores/{storeId}/records/{Uri.EscapeDataString(sanitized)}?disableRedirect=true";
         }
-        var localKey = key.Replace('/', Path.DirectorySeparatorChar).Replace('\\', Path.DirectorySeparatorChar);
-        return Path.Combine("apify_storage", "key_value_store", localKey);
+        // Local: return full path to the saved file (same logic as SaveImageAsync)
+        var baseDir = Directory.GetCurrentDirectory();
+        var sep = Path.DirectorySeparatorChar;
+        if (baseDir.Contains(sep + "bin" + sep))
+        {
+            var parts = baseDir.Split(sep);
+            var binIdx = Array.FindLastIndex(parts, p => string.Equals(p, "bin", StringComparison.OrdinalIgnoreCase));
+            if (binIdx > 0) baseDir = string.Join(sep, parts.Take(binIdx));
+        }
+        var kvDir = Path.Combine(baseDir, "apify_storage", "key_value_store");
+        var localKey = key.Replace('/', sep).Replace('\\', sep);
+        return Path.Combine(kvDir, localKey);
     }
 
     internal static string SanitizeKeyForApify(string key)
