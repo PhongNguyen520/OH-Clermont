@@ -153,7 +153,8 @@ public class ClermontScraperService
 
         try
         {
-            await ScrapeAllRecordsOnResultsPageAsync(page, fromDate, outputDirectory, exportImages);
+            var (total, succeeded, failed) = await ScrapeAllRecordsOnResultsPageAsync(page, fromDate, outputDirectory, exportImages);
+            await ApifyHelper.SetStatusMessageAsync($"Finished! Total {total} requests: {succeeded} succeeded, {failed} failed.", isTerminal: true);
             Console.WriteLine("[Scrape] Done. Records were pushed to Dataset and appended to CSV.");
         }
         finally
@@ -336,7 +337,7 @@ public class ClermontScraperService
     }
 
     /// <summary>Scrape all records on results page: click first, then Next, flush after each record.</summary>
-    public async Task<List<ClermontRecord>> ScrapeAllRecordsOnResultsPageAsync(
+    public async Task<(int total, int succeeded, int failed)> ScrapeAllRecordsOnResultsPageAsync(
         IPage page,
         DateTime searchDate,
         string outputDirectory,
@@ -390,13 +391,20 @@ public class ClermontScraperService
 
         var linkCount = await resultListFrame.Locator(instrumentSelector).CountAsync();
         var totalToProcess = pageCount > 0 ? Math.Min(pageCount, linkCount) : linkCount;
+        const int TestLimit = 5;
+        totalToProcess = Math.Min(totalToProcess, TestLimit);
+        if ((pageCount > 0 ? Math.Min(pageCount, linkCount) : linkCount) > TestLimit)
+            Console.WriteLine($"[OH_Clermont] Limiting to {TestLimit} records for test.");
 
         Console.WriteLine($"[Results] navDisplay pageCount = {pageCount}, instrumentLinks = {linkCount}, totalToProcess = {totalToProcess}, currentPage = {currentPage}, totalPages = {totalPages}");
 
         if (totalToProcess == 0)
-            return new List<ClermontRecord>();
+            return (0, 0, 0);
 
         await ApifyHelper.SetStatusMessageAsync("Found records. Preparing to extract...");
+
+        var pageSucceeded = 0;
+        var pageFailed = 0;
 
         for (var i = 0; i < totalToProcess; i++)
         {
@@ -405,24 +413,34 @@ public class ClermontScraperService
                 await ApifyHelper.SetStatusMessageAsync($"Processing record {i + 1} of {totalToProcess} on current page...");
             }
 
-            if (i == 0)
+            try
             {
-                var firstLink = resultListFrame.Locator(instrumentSelector).First;
-                await firstLink.ScrollIntoViewIfNeededAsync();
-                await firstLink.ClickAsync();
+                if (i == 0)
+                {
+                    var firstLink = resultListFrame.Locator(instrumentSelector).First;
+                    await firstLink.ScrollIntoViewIfNeededAsync();
+                    await firstLink.ClickAsync();
+                }
+                else
+                {
+                    var moved = await FormFiller.ClickNextDocumentAsync(page);
+                    if (!moved)
+                        break;
+                }
+
+                var record = await ScrapeInstrumentInfoAsync(page);
+                batch.Add(record);
+
+                if (exportImages)
+                    await ImageProcessor.ProcessImagesForCurrentRecordAsync(page, record, searchDate, i + 1);
+
+                pageSucceeded++;
             }
-            else
+            catch (Exception ex)
             {
-                var moved = await FormFiller.ClickNextDocumentAsync(page);
-                if (!moved)
-                    break;
+                Console.WriteLine($"[OH_Clermont] Error processing record {i + 1}: {ex.Message}");
+                pageFailed++;
             }
-
-            var record = await ScrapeInstrumentInfoAsync(page);
-            batch.Add(record);
-
-            if (exportImages)
-                await ImageProcessor.ProcessImagesForCurrentRecordAsync(page, record, searchDate, i + 1);
 
             GC.Collect();
             GC.WaitForPendingFinalizers();
@@ -442,14 +460,11 @@ public class ClermontScraperService
         {
             await FormFiller.ClickBackToResultsAsync(page);
             await FormFiller.ClickNextResultsPageAsync(page);
-            await ScrapeAllRecordsOnResultsPageAsync(page, searchDate, outputDirectory, exportImages);
-        }
-        else
-        {
-            await ApifyHelper.SetStatusMessageAsync("Success: All records exported to CSV and Dataset.", isTerminal: true);
+            var (childTotal, childSucceeded, childFailed) = await ScrapeAllRecordsOnResultsPageAsync(page, searchDate, outputDirectory, exportImages);
+            return (totalToProcess + childTotal, pageSucceeded + childSucceeded, pageFailed + childFailed);
         }
 
-        return new List<ClermontRecord>();
+        return (totalToProcess, pageSucceeded, pageFailed);
     }
 
     async Task ClearCookiesAndReloadAsync(IPage page)
